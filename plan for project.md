@@ -22,4 +22,24 @@ look of it
                     │  vector index + BM25 (numpy/sqlite)           │
                     └─────────────────────────────────────────────┘
 
-                    
+Week by week plan
+
+1           Build, flash VBIOS, POST, Ubuntu, SSH over ethernet
+
+2           Docker + ROCm gfx803 images, rocminfo sees 4 GPUs
+
+3           Build llama.cpp with HIP (Vulkan fallback), 4-GPU split, tok/s benchmark
+
+4           Models downloaded, 3 llama-server instances as systemd/compose services
+
+5-6         Chunker + vector store + BM25 + RRF, ingest CLI
+
+7-8         Reranker + prompt/answer pipeline + citations
+
+9-10        FastAPI + web UI, remote demo from your main PC
+
+11          Hybrid-search tuning, eval set, benchmark page
+
+12          Docs, screenshots, README, demo video
+
+13          Polish + submit
