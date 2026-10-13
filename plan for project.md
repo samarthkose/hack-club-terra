@@ -43,3 +43,6 @@ Week by week plan
 12          Docs, screenshots, README, demo video
 
 13          Polish + submit
+
+
+
