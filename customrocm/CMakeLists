@@ -1,0 +1,67 @@
+cmake_minimum_required(VERSION 3.16)
+project(croc C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+find_package(Vulkan REQUIRED)
+find_package(Threads REQUIRED)
+
+add_library(croc
+    src/loader.c
+    src/device.c
+    src/memory.c
+    src/kernelc.c
+    src/scheduler.c
+)
+
+target_include_directories(croc
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/croc
+)
+
+target_link_libraries(croc
+    PRIVATE
+    Vulkan::Vulkan
+    Threads::Threads
+)
+
+target_compile_definitions(croc
+    PRIVATE
+    CROC_BUILDING_DLL
+)
+
+target_compile_options(croc
+    PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    $<$<C_COMPILER_ID:MSVC>:/W4>
+)
+
+set_target_properties(croc PROPERTIES
+    VERSION 0.1.0
+    SOVERSION 0
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_executable(crocinfo tools/crocinfo.c)
+target_link_libraries(crocinfo PRIVATE croc)
+
+add_executable(croc_layer_demo tools/croc_layer_demo.c)
+target_link_libraries(croc_layer_demo PRIVATE croc)
+
+install(TARGETS croc
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/croc DESTINATION include)
+
+install(TARGETS crocinfo croc_layer_demo
+    RUNTIME DESTINATION bin
+)

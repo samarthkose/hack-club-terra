@@ -1,0 +1,95 @@
+# CROC — plain-make build for hosts without cmake (aipc: gcc + make only)
+#
+# Vulkan headers are vendored under ~/sdk/Vulkan-Headers when the system
+# headers are absent (aipc has libvulkan runtime but no libvulkan-dev):
+#   git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers ~/sdk/Vulkan-Headers
+# Override: make VULKAN_INC=/path/to/include
+
+CC        ?= gcc
+BUILD     ?= build
+.DEFAULT_GOAL := all
+VULKAN_INC ?= $(HOME)/sdk/Vulkan-Headers/include
+
+CFLAGS    ?= -O2 -g -std=gnu11 -Wall -Wextra
+CPPFLAGS   = -Iinclude -Iinclude/croc
+
+# Vulkan loader link: prefer the dev symlink when present; otherwise link the
+# runtime soname directly (aipc has libvulkan.so.1 via Mesa but no libvulkan-dev).
+ifeq ($(wildcard /usr/lib/x86_64-linux-gnu/libvulkan.so),)
+  VULKAN_LIB ?= -l:libvulkan.so.1
+else
+  VULKAN_LIB ?= -lvulkan
+endif
+LDLIBS     = $(VULKAN_LIB)
+
+# Use system headers when present, otherwise the vendored copy.
+ifneq ($(wildcard /usr/include/vulkan/vulkan.h),)
+  # system headers found — nothing extra to add
+else
+  CPPFLAGS += -I$(VULKAN_INC)
+endif
+
+LIB_SRCS := src/loader.c src/device.c src/memory.c src/kernelc.c src/scheduler.c src/builtin.c
+LIB_OBJS := $(LIB_SRCS:src/%.c=$(BUILD)/%.o)
+
+# Offline GLSL -> SPIR-V builtin kernels. glslangValidator is installed user-locally
+# under ~/sdk/glslang (no sudo); see tools/transfer.sh and docs/architecture.md.
+GLSLANG ?= $(HOME)/sdk/glslang/bin/glslangValidator
+ifneq ($(wildcard $(GLSLANG)),)
+  CPPFLAGS += -DCROC_HAVE_BUILTIN_SPIRV -I$(BUILD)
+  BUILTIN_HDR := $(BUILD)/fill_spv.h
+
+  $(BUILD)/fill_spv.h: shaders/fill.comp scripts/spv_to_header.py | $(BUILD)
+	$(GLSLANG) -V shaders/fill.comp -o $(BUILD)/fill.spv
+	python3 scripts/spv_to_header.py $(BUILD)/fill.spv fill_spv CROC_FILL_SPV_H > $@
+
+  $(BUILD)/builtin.o: src/builtin.c $(BUILTIN_HDR) include/croc/croc.h include/croc/croc_internal.h | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c src/builtin.c -o $@
+endif
+
+BINS := $(BUILD)/crocinfo $(BUILD)/croc_layer_demo $(BUILD)/gcr_probe $(BUILD)/spv_dump $(BUILD)/vram_probe $(BUILD)/bw_test $(BUILD)/memtype_probe
+
+all: $(BINS)
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+$(BUILD)/%.o: src/%.c include/croc/croc.h include/croc/croc_internal.h | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(BUILD)/libcroc.a: $(LIB_OBJS)
+	ar rcs $@ $^
+
+$(BUILD)/crocinfo: tools/crocinfo.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+$(BUILD)/croc_layer_demo: tools/croc_layer_demo.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+# dev tool: dump the hand-emitted SPIR-V module as hex words
+$(BUILD)/spv_dump: tools/spv_dump.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+# dev tool: measure allocatable VRAM per device
+$(BUILD)/vram_probe: tools/vram_probe.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+# dev tool: per-GPU PCIe + on-GPU write bandwidth
+$(BUILD)/bw_test: tools/bw_test.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+# dev tool: memory-type dump + VRAM/GTT placement test
+$(BUILD)/memtype_probe: tools/memtype_probe.c $(BUILD)/libcroc.a
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< -L$(BUILD) -lcroc $(LDLIBS) -o $@
+
+# Phase-0 KFD topology probe (standalone, no Vulkan)
+$(BUILD)/gcr_probe: tools/gcr_probe.c | $(BUILD)
+	$(CC) $(CFLAGS) $< -o $@
+
+clean:
+	rm -rf $(BUILD)
+
+test:
+	python3 tests/test_spv_check.py
+
+.PHONY: all clean test

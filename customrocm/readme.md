@@ -1,48 +1,55 @@
-# CROC — Custom ROCm On Compute (Vulkan backend)
+# CROC: Custom ROCm On Compute (Vulkan backend)
 
-A Vulkan-compute-based GPU compute runtime for 4× AMD RX 580 (gfx803) on the `aipc` host. Bypasses the KFD PCIe-atomics gate that blocks 2 of 4 GPUs by using Vulkan compute queues instead of ROCm/HSA.
+A Vulkan compute runtime for 4x AMD RX 580 (gfx803) cards in the `aipc` box.
+It sidesteps the KFD PCIe-atomics check that leaves 2 of the 4 GPUs unusable
+by driving everything through Vulkan compute queues instead of ROCm/HSA.
 
-## Why this exists
+## Why bother
 
-The aipc host has 4× RX 580. Standard ROCm/KFD only exposes 2 GPU nodes because the Z390 PCH root ports don't advertise PCIe AtomicOps capability. CROC uses Vulkan compute (RADV driver) which enumerates all 4 GPUs regardless of PCIe atomics support.
+`aipc` has four RX 580s in it. Stock ROCm/KFD only sees two of them, because
+the Z390 PCH root ports don't advertise PCIe AtomicOps capability and KFD
+refuses to touch anything behind them. Vulkan through RADV doesn't care. It
+enumerates all four cards and runs kernels on them just fine.
 
 ## Build
 
-Primary build path on aipc uses plain `make` (aipc has gcc + make, no cmake,
-no sudo):
+The main build path on `aipc` is plain `make`. That machine has gcc and make,
+no cmake, no sudo, and I'd like to keep it that way.
 
 ```bash
-# From Windows (Git Bash), after aipc is powered on:
+# From Windows (Git Bash), once aipc is powered on:
 tools/transfer.sh          # tar-over-ssh + make + crocinfo + both demo paths + checks
 
-# Or manually on aipc:
+# Or by hand on aipc:
 make -j4
 make test                  # python3 tests/test_spv_check.py (SPIR-V checker)
 ./build/crocinfo           # enumerate devices (tier/link/clocks)
 ./build/croc_layer_demo    # builtin glslang kernel, verifies results
-./build/croc_layer_demo --emit   # same, but through the hand-rolled emitter
+./build/croc_layer_demo --emit   # same thing, but through the hand-rolled emitter
 ./build/spv_dump | python3 scripts/spv_check.py /dev/stdin   # static SPIR-V check
 ```
 
-CMake remains supported where cmake + system Vulkan headers exist:
+CMake still works on machines that have cmake and system Vulkan headers:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
 ```
 
-**Dependencies**: Vulkan loader (`libvulkan.so.1`, shipped with Mesa) and a
-Vulkan-capable driver (RADV). No ROCm packages, no kernel rebuild, no sudo.
+**Dependencies**: the Vulkan loader (`libvulkan.so.1`, ships with Mesa) and a
+driver that speaks Vulkan (RADV). No ROCm packages, no kernel rebuild, no sudo.
 
-**Toolchain on aipc (user-local, no sudo):**
-- `~/sdk/Vulkan-Headers` — headers for compilation (no libvulkan-dev installed)
-- `~/sdk/glslang` — glslangValidator 16.6.0, compiles `shaders/*.comp` to SPIR-V
-  at build time; embedded via `scripts/spv_to_header.py` into `build/fill_spv.h`
-- Makefile links `-l:libvulkan.so.1` (runtime soname; no dev symlink present)
+**Toolchain on aipc (all user-local, no sudo):**
+- `~/sdk/Vulkan-Headers` — headers to compile against, since there's no
+  `libvulkan-dev` installed
+- `~/sdk/glslang` — glslangValidator 16.6.0, compiles `shaders/*.comp` to
+  SPIR-V at build time and `scripts/spv_to_header.py` embeds it into
+  `build/fill_spv.h`
+- Makefile links `-l:libvulkan.so.1` because there's no dev symlink around
 
-## Transfer to aipc
+## Moving it to aipc
 
 ```bash
-# From Windows (Git Bash / WSL), after aipc is powered on:
+# From Windows (Git Bash / WSL), once aipc is up:
 AIPC_HOST=aipc@192.168.1.144 ./tools/transfer.sh
 ```
 
@@ -85,7 +92,7 @@ croc_stream_synchronize(stream);
 uint32_t shard_sizes[N];
 croc_layer_plan(devices, N, total_size, shard_sizes);
 
-// Allocate one buffer per device, dispatch kernel on each
+// One buffer per device, dispatch the kernel on each
 for (i = 0; i < N; i++) {
     croc_buffer_allocate(devices[i], shard_sizes[i], &buffers[i]);
     croc_kernel_dispatch(kernels[i], wg, streams[i]);
@@ -116,7 +123,7 @@ for (i = 0; i < N; i++)
 
 ## Status
 
-**V1 VERIFIED on aipc (2026-10-13) — real GPU compute on all 4 RX 580s.**
+**V1 verified on aipc (2026-10-13). Real GPU compute on all 4 RX 580s.**
 
 ```
 Devices: 4
@@ -128,31 +135,38 @@ Dispatching fill kernel across 4 devices...
 Result: 4/4 devices verified
 ```
 
-This includes GPUs 2 and 3 behind the Z390 PCH — the cards KFD rejects with
-`PCI rejects atomics 730<0`. CROC executes verified kernels on them via
-Vulkan compute.
+That includes GPUs 2 and 3 sitting behind the Z390 PCH, the two cards KFD
+rejects with `PCI rejects atomics 730<0`. CROC runs verified kernels on them
+through Vulkan compute.
 
-**Emitter crash — ROOT-CAUSED, FIXED, AND VERIFIED on aipc (2026-10-13).**
-The hand-rolled SPIR-V emitter (`src/kernelc.c`) segfaulted RADV at
-`vkCreateComputePipelines`. Three defects were found and fixed:
-1. `OpTypeVector` emitted with 2 operands instead of 3 (missing component count)
-2. push-constant `OpAccessChain` result type was pointer-to-struct instead of
-   pointer-to-uint (must point at the FINAL indexed type)
-3. residual: loop cluster (header-relative conditional + `OpPhi` induction +
-   StorageBuffer SC + SPIR-V 1.3) — fixed by cloning the known-good glslang
-   output shape (SPIR-V 1.0, Uniform+BufferBlock, function-scope induction
-   variable, unconditional header branch, condition in a separate block)
+**Emitter crash: root-caused, fixed, and verified on aipc (2026-10-13).**
+The hand-rolled SPIR-V emitter in `src/kernelc.c` was segfaulting RADV inside
+`vkCreateComputePipelines`. Three things were wrong:
 
-Result: `croc_layer_demo --emit` → **4/4 devices PASS**, same as the builtin
-glslang kernel. Guarded by `scripts/spv_check.py` + `tests/test_spv_check.py`
-(fixtures include the real pre-fix module); the live-module check in
-`tools/transfer.sh` caught an incomplete fix that unit fixtures missed.
-See ACTIVITY_LOG.md sessions 4–5.
+1. `OpTypeVector` was emitted with 2 operands instead of 3 (the component
+   count was missing)
+2. push-constant `OpAccessChain` had the wrong result type: pointer-to-struct
+   where it needed pointer-to-uint, since it has to point at the final indexed
+   type
+3. residual mess: the loop cluster (header-relative conditional, `OpPhi`
+   induction, StorageBuffer SC, SPIR-V 1.3). Fixed by cloning the shape
+   glslang already produces: SPIR-V 1.0, Uniform+BufferBlock, function-scope
+   induction variable, unconditional header branch, condition parked in its
+   own block
+
+After that, `croc_layer_demo --emit` gets **4/4 devices PASS**, same as the
+builtin glslang kernel. It's guarded by `scripts/spv_check.py` plus
+`tests/test_spv_check.py` (the fixtures include the actual pre-fix module).
+Worth noting the live-module check in `tools/transfer.sh` is what caught an
+incomplete fix that the unit fixtures missed. More detail in ACTIVITY_LOG.md
+sessions 4–5.
 
 Next steps:
-1. Diff hand-emitted module vs glslang output (needs spirv-val/spirv-dis);
-   fix or remove the emitter
-2. More kernels: vector add, GEMM tile, L2-norm — GLSL → builtin SPIR-V
-3. Multi-device peer copy + weight-sharded matmul demo
-4. llama.cpp Vulkan cross-check (`-DGGML_VULKAN=ON`, `GGML_VK_VISIBLE_DEVICES`)
-5. Optional KFD patch lane (`kernel/`) if PyTorch-on-4 becomes mandatory
+
+1. Diff the hand-emitted module against glslang output (needs
+   spirv-val/spirv-dis), then fix or drop the emitter
+2. More kernels: vector add, GEMM tile, L2-norm, GLSL to builtin SPIR-V
+3. Multi-device peer copy and a weight-sharded matmul demo
+4. llama.cpp Vulkan cross-check (`-DGGML_VULKAN=ON`,
+   `GGML_VK_VISIBLE_DEVICES`)
+5. Optional KFD patch lane (`kernel/`) if PyTorch-on-4 ever becomes mandatory
