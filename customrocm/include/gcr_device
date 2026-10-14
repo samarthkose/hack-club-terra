@@ -1,0 +1,159 @@
+/*
+ * gcr — Custom ROCm on Vulkan
+ * gfx803 (Polaris / RX 580) Vulkan-compute-based compute runtime
+ *
+ * Device: Vulkan compute pipeline — VkDevice, queues, buffers, pipelines, dispatch.
+ */
+
+#ifndef GCR_DEVICE_H
+#define GCR_DEVICE_H
+
+#include "gcr_loader.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <vulkan/vulkan.h>
+
+/* Forward declaration for opaque device handle */
+typedef struct gcr_device gcr_device_t;
+
+/* Buffer handle (opaque) */
+typedef struct gcr_buffer gcr_buffer_t;
+
+/* Compute pipeline handle (opaque) */
+typedef struct gcr_pipeline gcr_pipeline_t;
+
+/* Stream handle (opaque) — wraps a command buffer */
+typedef struct gcr_stream gcr_stream_t;
+
+/*
+ * Create a device handle for a specific GPU index.
+ * Returns NULL on failure.
+ */
+gcr_device_t *gcr_device_create(uint32_t gpu_index);
+
+/*
+ * Destroy a device handle.
+ */
+void gcr_device_destroy(gcr_device_t *dev);
+
+/*
+ * Get device info.
+ */
+const gcr_device_info_t *gcr_device_get_info(const gcr_device_t *dev);
+
+/*
+ * Allocate a buffer on the device.
+ * @param size: size in bytes
+ * @param host_visible: if true, buffer is host-visible (for memcpy); if false, device-local (for compute)
+ * Returns NULL on failure.
+ */
+gcr_buffer_t *gcr_device_alloc_buffer(gcr_device_t *dev, uint64_t size, bool host_visible);
+
+/*
+ * Free a buffer.
+ */
+void gcr_device_free_buffer(gcr_device_t *dev, gcr_buffer_t *buf);
+
+/*
+ * Get buffer size.
+ */
+uint64_t gcr_buffer_get_size(const gcr_buffer_t *buf);
+
+/*
+ * Map buffer to host address (for host-visible buffers).
+ * Returns pointer or NULL.
+ */
+void *gcr_buffer_map(gcr_buffer_t *buf);
+
+/*
+ * Unmap buffer.
+ */
+void gcr_buffer_unmap(gcr_buffer_t *buf);
+
+/*
+ * Get VkBuffer handle (for advanced usage).
+ */
+VkBuffer gcr_buffer_get_vk(const gcr_buffer_t *buf);
+
+/*
+ * Create a compute pipeline from SPIR-V code.
+ * @param spirv: pointer to SPIR-V binary (uint32_t words)
+ * @param spirv_size: size in bytes
+ * @param entry_point: entry point name (e.g., "main")
+ * Returns NULL on failure.
+ */
+gcr_pipeline_t *gcr_device_create_pipeline(gcr_device_t *dev,
+                                            const uint32_t *spirv,
+                                            size_t spirv_size,
+                                            const char *entry_point);
+
+/*
+ * Destroy a pipeline.
+ */
+void gcr_device_destroy_pipeline(gcr_device_t *dev, gcr_pipeline_t *pipe);
+
+/*
+ * Create a stream (command buffer wrapper).
+ */
+gcr_stream_t *gcr_device_create_stream(gcr_device_t *dev);
+
+/*
+ * Destroy a stream.
+ */
+void gcr_device_destroy_stream(gcr_device_t *dev, gcr_stream_t *stream);
+
+/*
+ * Begin recording a command buffer on a stream.
+ */
+int gcr_stream_begin(gcr_stream_t *stream);
+
+/*
+ * End recording and submit.
+ */
+int gcr_stream_end(gcr_stream_t *stream);
+
+/*
+ * Dispatch compute work.
+ * @param pipeline: compute pipeline
+ * @param x: workgroup count X
+ * @param y: workgroup count Y
+ * @param z: workgroup count Z
+ * @param buffers: array of buffer bindings (input/output)
+ * @param buffer_count: number of buffers
+ * @param push_constants: optional push constants data
+ * @param push_size: size of push constants (0 if none)
+ */
+int gcr_stream_dispatch(gcr_stream_t *stream,
+                        gcr_pipeline_t *pipeline,
+                        uint32_t x, uint32_t y, uint32_t z,
+                        gcr_buffer_t **buffers,
+                        uint32_t buffer_count,
+                        const void *push_constants,
+                        uint32_t push_size);
+
+/*
+ * Wait for stream to complete.
+ */
+int gcr_stream_wait(gcr_stream_t *stream);
+
+/*
+ * Copy data from host to buffer (synchronous).
+ */
+int gcr_device_memcpy_h2d(gcr_device_t *dev, gcr_buffer_t *buf,
+                          const void *src, uint64_t offset, uint64_t size);
+
+/*
+ * Copy data from buffer to host (synchronous).
+ */
+int gcr_device_memcpy_d2h(gcr_device_t *dev, gcr_buffer_t *buf,
+                          void *dst, uint64_t offset, uint64_t size);
+
+/*
+ * Copy data between two buffers on the same device.
+ */
+int gcr_device_memcpy_d2d(gcr_device_t *dev,
+                          gcr_buffer_t *dst, uint64_t dst_offset,
+                          gcr_buffer_t *src, uint64_t src_offset,
+                          uint64_t size);
+
+#endif /* GCR_DEVICE_H */

@@ -1,0 +1,25 @@
+--- a/drivers/gpu/drm/amd/amdkfd/kfd_device.c
++++ b/drivers/gpu/drm/amd/amdkfd/kfd_device.c
+@@ -1100,10 +1100,24 @@ struct kfd_device *kfd_create_device(struct kfd_topology_device *topo_dev)
+ 	if (!kfd_supported_ip_blocks(topo_dev))
+ 		return NULL;
+
+-	if (!pci_enable_atomic_req_to_root(pdev)) {
+-		dev_err(kfd_device, "skipped device %x:%x, PCI rejects atomics %x<%x\n",
+-			pdev->vendor, pdev->device, topo_dev->gfx_target_version, 0x730);
+-		return NULL;
+-	}
++	if (!pci_enable_atomic_req_to_root(pdev)) {
++		if (!kfd_allow_no_atomics) {
++			dev_err(kfd_device, "skipped device %x:%x, PCI rejects atomics %x<%x\n",
++				pdev->vendor, pdev->device, topo_dev->gfx_target_version, 0x730);
++			return NULL;
++		}
++		dev_warn(kfd_device,
++			 "device %x:%x: PCIe atomics NOT available on this path, continuing (kfd.allow_no_atomics=1)\n",
++			 pdev->vendor, pdev->device);
++	}
+
+ 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+ 	if (!dev)
+ 		return NULL;
