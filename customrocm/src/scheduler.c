@@ -39,5 +39,3 @@ croc_result croc_layer_dispatch(croc_kernel* const* kernels, uint32_t device_cou
 
         return CROC_OK;
     }
-
-the window is focused. only on vscode so you prob wont see anything, Im just pushing and saving to github rn
